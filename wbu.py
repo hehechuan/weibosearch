@@ -16,6 +16,7 @@ import json
 import hashlib
 from xlwt.Workbook import *
 from xlwt.Style import *
+import platform
 
 
 def get_page(url):
@@ -29,8 +30,9 @@ def get_page(url):
 		return html
 
 def printout(s):
-	if setting['encoding'] != "utf8":
-		s = s.decode("utf8").encode(encoding)
+	osver = platform.platform().lower()
+	if "windows" in osver:
+		s = s.decode("utf8").encode("gbk")
 	print "%s" % s
 
 def sleep(n):
@@ -209,7 +211,8 @@ setting = {}
 l = open(wfile)
 for line in l:
 	key, val = line.strip().split("]")
-	setting[key[1:]] = val
+	tmp = key.split("[")
+	setting[tmp[1]] = val
 l.close()
 
 
