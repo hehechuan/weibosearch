@@ -1,0 +1,6 @@
+[search]缔元信
+[date]2012-10-12_2012-10-30
+[sleep]30
+[account]xxx/xxx
+[encoding]utf8
+[output]moyan.xls
