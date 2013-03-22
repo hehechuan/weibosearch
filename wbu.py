@@ -1,27 +1,35 @@
 # -*- coding=UTF8 -*-
 
-import urllib2
-import urllib
-import sys
-import StringIO
-import gzip
-import re
-import time
-import random
-import traceback
-import os
-import cookielib
-import base64
-import json
-import hashlib
-from xlwt.Workbook import *
-from xlwt.Style import *
-import platform
+try:
+	import urllib2
+	import urllib
+	import sys
+	import StringIO
+	import gzip
+	import re
+	import time
+	import random
+	import traceback
+	import os
+	import cookielib
+	import base64
+	import json
+	import hashlib
+	from xlwt.Workbook import *
+	from xlwt.Style import *
+	import platform
+	import rsa
+	import binascii 
+except ImportError:
+	print >> sys.stderr,  "missing python module"
+	sys.exit(1)
 
 
-def get_page(url):
+
+def get_page(url, page):
 	html = fetch_page(url)
-	sleep(sleeptime)
+	if page > 1:
+		sleep(sleeptime)
 	if "pincode" in url.replace("\n", ""):
 		print "try pincode"
 		time.sleep(10)
@@ -87,8 +95,8 @@ def get_url(word, day, page):
 	return u
 
 
-def get_servertime():
-	url = 'http://login.sina.com.cn/sso/prelogin.php?entry=weibo&callback=sinaSSOController.preloginCallBack&su=dW5kZWZpbmVk&client=ssologin.js(v1.3.18)&_=1329806375939'
+def get_servertime(username):
+	url = "http://login.sina.com.cn/sso/prelogin.php?entry=weibo&callback=sinaSSOController.preloginCallBack&su=%s&rsakt=mod&checkpin=1&client=ssologin.js(v1.4.5)" % get_user(username) 
 	data = urllib2.urlopen(url).read()
 	p = re.compile('\((.*)\)')
 	try:
@@ -96,17 +104,20 @@ def get_servertime():
 		data = json.loads(json_data)
 		servertime = str(data['servertime'])
 		nonce = data['nonce']
-		return servertime, nonce
-	except:
+		rsakv = data['rsakv']
+		return servertime, nonce, rsakv
+	except Exception, e:
 		print 'Get severtime error!'
 		return None
 
 def get_pwd(pwd, servertime, nonce):
-	pwd1 = hashlib.sha1(pwd).hexdigest()
-	pwd2 = hashlib.sha1(pwd1).hexdigest()
-	pwd3_ = pwd2 + servertime + nonce
-	pwd3 = hashlib.sha1(pwd3_).hexdigest()
-	return pwd3
+	weibo_rsa_n = 'EB2A38568661887FA180BDDB5CABD5F21C7BFD59C090CB2D245A87AC253062882729293E5506350508E7F9AA3BB77F4333231490F915F6D63C55FE2F08A49B353F444AD3993CACC02DB784ABBB8E42A9B1BBFFFB38BE18D78E87A0E41B9B8F73A928EE0CCEE1F6739884B9777E4FE9E88A1BBE495927AC4A799B3181D6442443'
+	weibo_rsa_e = 65537
+	message = str(servertime) + "\t" + str(nonce) + "\n" + str(pwd)
+	key = rsa.PublicKey(int(weibo_rsa_n, 16), weibo_rsa_e)
+	encropy_pwd = rsa.encrypt(message, key)
+	return binascii.b2a_hex(encropy_pwd)
+	
 
 def get_user(username):
 	username_ = urllib.quote(username)
@@ -115,9 +126,9 @@ def get_user(username):
 
 
 def login(username, pwd):
-	url = 'http://login.sina.com.cn/sso/login.php?client=ssologin.js(v1.3.18)'
+	url = "http://login.sina.com.cn/sso/login.php?client=ssologin.js(v1.4.5)"
 	try:
-		servertime, nonce = get_servertime()
+		servertime, nonce, rsakv = get_servertime(username)
 	except:
 		return None
 	postdata = get_postdata()
@@ -126,6 +137,7 @@ def login(username, pwd):
 	postdata['nonce'] = nonce
 	postdata['su'] = get_user(username)
 	postdata['sp'] = get_pwd(pwd, servertime, nonce)
+	postdata['rsakv'] = rsakv
 	postdata = urllib.urlencode(postdata)
 	headers = {'User-Agent':'Mozilla/5.0 (X11; Linux i686; rv:8.0) Gecko/20100101 Firefox/8.0'}
 	req  = urllib2.Request(
@@ -135,10 +147,12 @@ def login(username, pwd):
 	)
 	result = urllib2.urlopen(req)
 	text = result.read()
-	p = re.compile('location\.replace\(\'(.*?)\'\)')
+	p = re.compile('location\.replace\(\"(.*?)\"\)')
 	try:
 		login_url = p.search(text).group(1)
-		#print login_url
+		print login_url
+		if "retcode=0" not in login_url:
+			return None 
 		res = urllib2.urlopen(login_url)
 		header_info = res.info()
 		cookie = []
@@ -161,16 +175,17 @@ def get_postdata():
 		'from': '',
 		'savestate': '7',
 		'userticket': '1',
-		'ssosimplelogin': '1',
+		'pagereferer': 'http://login.sina.com.cn/sso/logout.php?entry=miniblog&r=http%3A%2F%2Fweibo.com%2Flogout.php%3Fbackurl%3D%2F',
 		'vsnf': '1',
-		'vsnval': '',
 		'su': '',
 		'service': 'miniblog',
 		'servertime': '',
 		'nonce': '',
-		'pwencode': 'wsse',
+		'pwencode': 'rsa2',
+		'rsakv': '',
 		'sp': '',
 		'encoding': 'UTF-8',
+		'prelt' : '45',
 		'url': 'http://weibo.com/ajaxlogin.php?framelogin=1&callback=parent.sinaSSOController.feedBackUrlCallBack',
 		'returntype': 'META'
 		}
@@ -272,9 +287,11 @@ else:
 re_username = re.compile("<dt class=\"face\">  <a href=\"(.*?)\" title=\"(.*?)\" target=\"_blank\"")
 re_content = re.compile("<em>(.*?)<\/em>")
 re_content_url = re.compile("allowForward=1&url=(.*?)&mid=")
-re_forward = re.compile("action-type=\"feed_list_forward\"  suda-data=\"(.*?)\">(.*?)</a>")
-re_comment = re.compile("action-type=\"feed_list_comment\" suda-data=\"(.*?)\">(.*?)</a>")
-re_url_time = re.compile("<\/span> <a href=\"(.*?)\" title=\"(.*?)\" date=\"(.*?)\" class=\"date\" node-type=\"feed_list_item_date\" suda-data=\"(.*?)\">")
+#re_forward = re.compile("action-type=\"feed_list_forward\"  suda-data=\"(.*?)\">(.*?)</a>")
+re_forward = re.compile(">\\\u8f6c\\\u53d1(.*?)</a>")
+#re_comment = re.compile("action-type=\"feed_list_comment\" suda-data=\"(.*?)\">(.*?)</a>")
+re_comment = re.compile(">\\\u8bc4\\\u8bba(.*?)</a>")
+re_url_time = re.compile("<\/span> <a href=\"(.*?)\" title=\"(.*?)\" date=\"(.*?)\" class=\"date\" node-type=\"feed_list_item_date\"(.*?)suda-data=\"(.*?)\">")
 
 
 ff = open("weibo_%s.txt" % sys.argv[1], "w")
@@ -295,7 +312,7 @@ for word in sword:
 			try:
 				url = get_url(word, day, 1)
 				last_url = url
-				data = get_page(url)
+				data = get_page(url, 1)
 				last_data = data
 				##get totalpage#
 				content = data.replace("\\n", "").replace("\/", "/").replace("\\\"", "\"")
@@ -319,14 +336,15 @@ for word in sword:
 			while current_page <= page:
 				try:
 					url = get_url(word, day, current_page)
-					current_page += 1
 					#print url
 					#continue
 					if url != last_url:
-						data = get_page(url)
+						data = get_page(url, 2)
 					else:
 						data = last_data
-					
+
+
+					current_page += 1
 					s = "\"pid\":\"pl_weibo_feedlist\""
 					tmp = data.split(s)
 					end = tmp[1].split(")</script>")
@@ -365,7 +383,7 @@ for word in sword:
 					tmp = re_forward.findall(content)
 					if tmp != None:
 						for x in tmp:
-							t = x[1][12:].replace("(", "").replace(")", "")
+							t = x.replace("(", "").replace(")", "")
 							if t == "":
 								t = "0"
 							forward.append(t)
@@ -373,11 +391,10 @@ for word in sword:
 					tmp = re_comment.findall(content)
 					if tmp != None:
 						for x in tmp:
-							t = x[1][12:].replace("(", "").replace(")", "")
+							t = x.replace("(", "").replace(")", "")
 							if t == "":
 								t = "0"
 							comment.append(t)
-
 
 
 					tmp = re_url_time.findall(content)
@@ -385,7 +402,6 @@ for word in sword:
 						for x in tmp:
 							content_url.append( x[0] )
 							posttime.append( x[ 1])
-
 
 					total = len(content_url)
 					test = []
@@ -413,7 +429,6 @@ ff.close()
 printout("抓取完成，结果保存到： weibo_%s.txt" % sys.argv[1])
 
 
-
 ff = open("weibo_%s.txt" % sys.argv[1])
 
 style = XFStyle()
@@ -432,7 +447,4 @@ wb.save(setting['output'])
 
 printout("生成EXCEL文件：%s" % setting['output'])
 os.remove("weibo_%s.txt" % sys.argv[1])
-
-
-
 
